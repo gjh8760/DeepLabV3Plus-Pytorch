@@ -7,7 +7,7 @@ import argparse
 import numpy as np
 
 from torch.utils import data
-from datasets import VOCSegmentation, Cityscapes
+from datasets import VOCSegmentation, Cityscapes, TextSeg_LR
 from utils import ext_transforms as et
 from metrics import StreamSegMetrics
 
@@ -24,10 +24,10 @@ def get_argparser():
     parser = argparse.ArgumentParser()
 
     # Datset Options
-    parser.add_argument("--data_root", type=str, default='./datasets/data',
+    parser.add_argument("--data_root", type=str, default='./datasets',
                         help="path to Dataset")
     parser.add_argument("--dataset", type=str, default='voc',
-                        choices=['voc', 'cityscapes'], help='Name of dataset')
+                        choices=['voc', 'cityscapes', 'textseg_lr'], help='Name of dataset')
     parser.add_argument("--num_classes", type=int, default=None,
                         help="num classes (default: None)")
 
@@ -150,6 +150,23 @@ def get_dataset(opts):
                                split='train', transform=train_transform)
         val_dst = Cityscapes(root=opts.data_root,
                              split='val', transform=val_transform)
+    
+    if opts.dataset == 'textseg_lr':
+        # TODO: get_dataset for textseg_lr
+        train_transform = et.ExtCompose([
+            et.ExtToTensor(),
+            et.ExtNormalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225]),
+        ])
+        val_transform = et.ExtCompose([
+            et.ExtToTensor(),
+            et.ExtNormalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225]),
+        ])
+
+        train_dst = TextSeg_LR(root=opts.data_root, image_set='train', transform=train_transform)
+        val_dst = TextSeg_LR(root=opts.data_root, image_set='val', transform=val_transform)
+
     return train_dst, val_dst
 
 
