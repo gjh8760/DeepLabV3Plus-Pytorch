@@ -8,7 +8,7 @@ import argparse
 import numpy as np
 
 from torch.utils import data
-from datasets import VOCSegmentation, Cityscapes, cityscapes
+from datasets import VOCSegmentation, Cityscapes, cityscapes, TextSeg_LR
 from torchvision import transforms as T
 from metrics import StreamSegMetrics
 
@@ -27,7 +27,7 @@ def get_argparser():
     parser.add_argument("--input", type=str, required=True,
                         help="path to a single image or image directory")
     parser.add_argument("--dataset", type=str, default='voc',
-                        choices=['voc', 'cityscapes'], help='Name of training set')
+                        choices=['voc', 'cityscapes', 'textseg_lr'], help='Name of training set')
 
     # Deeplab Options
     available_models = sorted(name for name in network.modeling.__dict__ if name.islower() and \
@@ -66,7 +66,11 @@ def main():
     elif opts.dataset.lower() == 'cityscapes':
         opts.num_classes = 19
         decode_fn = Cityscapes.decode_target
+    elif opts.dataset.lower() == 'textseg_lr':
+        opts.num_classes = 2
+        decode_fn = TextSeg_LR.decode_target
 
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device: %s" % device)
@@ -116,6 +120,8 @@ def main():
                 T.Normalize(mean=[0.485, 0.456, 0.406],
                                 std=[0.229, 0.224, 0.225]),
             ])
+    denorm = utils.Denormalize(mean=[0.485, 0.456, 0.406], 
+                               std=[0.229, 0.224, 0.225])
     if opts.save_val_results_to is not None:
         os.makedirs(opts.save_val_results_to, exist_ok=True)
     with torch.no_grad():
@@ -132,6 +138,18 @@ def main():
             colorized_preds = Image.fromarray(colorized_preds)
             if opts.save_val_results_to:
                 colorized_preds.save(os.path.join(opts.save_val_results_to, img_name+'.png'))
+                image = denorm(img)
+                image = image.detach().squeeze().permute(1, 2, 0).cpu().numpy()
+                image = np.clip(image * 255, 0, 255).astype(np.uint8)
+                fig = plt.figure()
+                plt.imshow(image)
+                plt.axis('off')
+                plt.imshow(pred, alpha=0.7)
+                ax = plt.gca()
+                ax.xaxis.set_major_locator(matplotlib.ticker.NullLocator())
+                ax.yaxis.set_major_locator(matplotlib.ticker.NullLocator())
+                plt.savefig(os.path.join(opts.save_val_results_to, img_name + '_overlay.png'), pad_inches=0)
+                plt.close()
 
 if __name__ == '__main__':
     main()

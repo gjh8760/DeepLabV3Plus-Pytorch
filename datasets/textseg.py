@@ -29,7 +29,7 @@ def voc_cmap(N=256, normalized=False):
     return cmap
 
 
-class TextSeg_LR(data.Dataset):
+class TextSeg(data.Dataset):
     
     cmap = voc_cmap()
 
@@ -40,7 +40,7 @@ class TextSeg_LR(data.Dataset):
         self.image_set = image_set
         assert self.image_set in ['train', 'val']
 
-        base_dir = os.path.join(self.root, 'TextSeg_LR', self.image_set)
+        base_dir = os.path.join(self.root, 'TextSeg', self.image_set)
         self.images = sorted(glob.glob(os.path.join(base_dir, 'image', '*.png')))
         self.masks = sorted(glob.glob(os.path.join(base_dir, 'mask', '*.png')))
         assert len(self.images) == len(self.masks)
@@ -74,7 +74,7 @@ class TextSeg_LR(data.Dataset):
 
 
 # if __name__ == '__main__':
-#     dataset = TextSeg_LR(root='./datasets', image_set='train', transform=None)
+#     dataset = TextSeg(root='./datasets', image_set='train', transform=None)
 #     print(len(dataset))
 #     for img, mask in dataset:
 #         print('')

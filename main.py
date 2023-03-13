@@ -13,7 +13,6 @@ from metrics import StreamSegMetrics
 
 import torch
 import torch.nn as nn
-from utils.visualizer import Visualizer
 
 from PIL import Image
 import matplotlib
@@ -84,15 +83,6 @@ def get_argparser():
     parser.add_argument("--year", type=str, default='2012',
                         choices=['2012_aug', '2012', '2011', '2009', '2008', '2007'], help='year of VOC')
 
-    # Visdom options
-    parser.add_argument("--enable_vis", action='store_true', default=False,
-                        help="use visdom for visualization")
-    parser.add_argument("--vis_port", type=str, default='13570',
-                        help='port for visdom')
-    parser.add_argument("--vis_env", type=str, default='main',
-                        help='env for visdom')
-    parser.add_argument("--vis_num_samples", type=int, default=8,
-                        help='number of samples for visualization (default: 8)')
     return parser
 
 
@@ -170,7 +160,7 @@ def get_dataset(opts):
     return train_dst, val_dst
 
 
-def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
+def validate(opts, model, loader, device, metrics):
     """Do validation and return specified samples"""
     metrics.reset()
     ret_samples = []
@@ -192,34 +182,32 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
             targets = labels.cpu().numpy()
 
             metrics.update(targets, preds)
-            if ret_samples_ids is not None and i in ret_samples_ids:  # get vis samples
-                ret_samples.append(
-                    (images[0].detach().cpu().numpy(), targets[0], preds[0]))
+            ret_samples.append((images[0].detach().cpu().numpy(), targets[0], preds[0]))
 
             if opts.save_val_results:
-                for i in range(len(images)):
-                    image = images[i].detach().cpu().numpy()
-                    target = targets[i]
-                    pred = preds[i]
+                if i == 0:
+                    for j in range(min(len(images), 10)):
+                        image = images[j].detach().cpu().numpy()
+                        target = targets[j]
+                        pred = preds[j]
 
-                    image = (denorm(image) * 255).transpose(1, 2, 0).astype(np.uint8)
-                    target = loader.dataset.decode_target(target).astype(np.uint8)
-                    pred = loader.dataset.decode_target(pred).astype(np.uint8)
+                        image = (denorm(image) * 255).transpose(1, 2, 0).astype(np.uint8)
+                        target = loader.dataset.decode_target(target).astype(np.uint8)
+                        pred = loader.dataset.decode_target(pred).astype(np.uint8)
 
-                    Image.fromarray(image).save('results/%d_image.png' % img_id)
-                    Image.fromarray(target).save('results/%d_target.png' % img_id)
-                    Image.fromarray(pred).save('results/%d_pred.png' % img_id)
+                        Image.fromarray(image).save('results/%d_image.png' % j)
+                        Image.fromarray(target).save('results/%d_target.png' % j)
+                        Image.fromarray(pred).save('results/%d_pred.png' % j)
 
-                    fig = plt.figure()
-                    plt.imshow(image)
-                    plt.axis('off')
-                    plt.imshow(pred, alpha=0.7)
-                    ax = plt.gca()
-                    ax.xaxis.set_major_locator(matplotlib.ticker.NullLocator())
-                    ax.yaxis.set_major_locator(matplotlib.ticker.NullLocator())
-                    plt.savefig('results/%d_overlay.png' % img_id, bbox_inches='tight', pad_inches=0)
-                    plt.close()
-                    img_id += 1
+                        fig = plt.figure()
+                        plt.imshow(image)
+                        plt.axis('off')
+                        plt.imshow(pred, alpha=0.7)
+                        ax = plt.gca()
+                        ax.xaxis.set_major_locator(matplotlib.ticker.NullLocator())
+                        ax.yaxis.set_major_locator(matplotlib.ticker.NullLocator())
+                        plt.savefig('results/%d_overlay.png' % j, bbox_inches='tight', pad_inches=0)
+                        plt.close()
 
         score = metrics.get_results()
     return score, ret_samples
@@ -231,13 +219,10 @@ def main():
         opts.num_classes = 21
     elif opts.dataset.lower() == 'cityscapes':
         opts.num_classes = 19
+    elif opts.dataset.lower() == 'textseg_lr':
+        opts.num_classes = 2    # TODO: num_classes 2인지 3인지?
 
-    # Setup visualization
-    vis = Visualizer(port=opts.vis_port,
-                     env=opts.vis_env) if opts.enable_vis else None
-    if vis is not None:  # display options
-        vis.vis_table("Options", vars(opts))
-
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Device: %s" % device)
@@ -293,7 +278,7 @@ def main():
         """
         torch.save({
             "cur_itrs": cur_itrs,
-            "model_state": model.module.state_dict(),
+            "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict(),
             "best_score": best_score,
@@ -309,7 +294,7 @@ def main():
         # https://github.com/VainF/DeepLabV3Plus-Pytorch/issues/8#issuecomment-605601402, @PytaichukBohdan
         checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'))
         model.load_state_dict(checkpoint["model_state"])
-        model = nn.DataParallel(model)
+        # model = nn.DataParallel(model)
         model.to(device)
         if opts.continue_training:
             optimizer.load_state_dict(checkpoint["optimizer_state"])
@@ -321,18 +306,16 @@ def main():
         del checkpoint  # free memory
     else:
         print("[!] Retrain")
-        model = nn.DataParallel(model)
+        # model = nn.DataParallel(model)
         model.to(device)
 
     # ==========   Train Loop   ==========#
-    vis_sample_id = np.random.randint(0, len(val_loader), opts.vis_num_samples,
-                                      np.int32) if opts.enable_vis else None  # sample idxs for visualization
     denorm = utils.Denormalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # denormalization for ori images
 
     if opts.test_only:
         model.eval()
         val_score, ret_samples = validate(
-            opts=opts, model=model, loader=val_loader, device=device, metrics=metrics, ret_samples_ids=vis_sample_id)
+            opts=opts, model=model, loader=val_loader, device=device, metrics=metrics)
         print(metrics.to_str(val_score))
         return
 
@@ -349,14 +332,12 @@ def main():
 
             optimizer.zero_grad()
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            loss = criterion(outputs, labels)  # TODO: 여기 넘어가면서 runtimeerror 발생 (device-side assert triggered)
             loss.backward()
             optimizer.step()
 
             np_loss = loss.detach().cpu().numpy()
             interval_loss += np_loss
-            if vis is not None:
-                vis.vis_scalar('Loss', cur_itrs, np_loss)
 
             if (cur_itrs) % 10 == 0:
                 interval_loss = interval_loss / 10
@@ -370,25 +351,13 @@ def main():
                 print("validation...")
                 model.eval()
                 val_score, ret_samples = validate(
-                    opts=opts, model=model, loader=val_loader, device=device, metrics=metrics,
-                    ret_samples_ids=vis_sample_id)
+                    opts=opts, model=model, loader=val_loader, device=device, metrics=metrics)
                 print(metrics.to_str(val_score))
                 if val_score['Mean IoU'] > best_score:  # save best model
                     best_score = val_score['Mean IoU']
                     save_ckpt('checkpoints/best_%s_%s_os%d.pth' %
                               (opts.model, opts.dataset, opts.output_stride))
 
-                if vis is not None:  # visualize validation score and samples
-                    vis.vis_scalar("[Val] Overall Acc", cur_itrs, val_score['Overall Acc'])
-                    vis.vis_scalar("[Val] Mean IoU", cur_itrs, val_score['Mean IoU'])
-                    vis.vis_table("[Val] Class IoU", val_score['Class IoU'])
-
-                    for k, (img, target, lbl) in enumerate(ret_samples):
-                        img = (denorm(img) * 255).astype(np.uint8)
-                        target = train_dst.decode_target(target).transpose(2, 0, 1).astype(np.uint8)
-                        lbl = train_dst.decode_target(lbl).transpose(2, 0, 1).astype(np.uint8)
-                        concat_img = np.concatenate((img, target, lbl), axis=2)  # concat along width
-                        vis.vis_image('Sample %d' % k, concat_img)
                 model.train()
             scheduler.step()
 
